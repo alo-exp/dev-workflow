@@ -87,6 +87,38 @@ SRC_EXCLUDE_PATTERN="__tests__|\.test\."
 | `agent-readme.md` | Full setup guide for any agent or developer |
 | `CLAUDE.md.template` | Drop-in CLAUDE.md section with workflow rules |
 
+## Plugin Locations
+
+Skills are invoked by name (e.g. `/documentation`). If a skill cannot be found, Claude must stop and notify the user — never silently skip it.
+
+### Superpowers plugin
+
+```
+~/.claude/plugins/cache/superpowers-marketplace/superpowers/<version>/skills/
+```
+
+Skills: `brainstorming`, `writing-plans`, `executing-plans`, `requesting-code-review`, `receiving-code-review`, `verification-before-completion`, `systematic-debugging`, `finishing-a-development-branch`, etc.
+
+### Engineering plugin
+
+The Engineering plugin is distributed via Claude's local agent mode session cache. It is **not** in the superpowers marketplace cache.
+
+```
+~/Library/Application Support/Claude/local-agent-mode-sessions/<session-id>/<agent-id>/rpm/plugin_01RAnuCvafZfGPUyv8T67WkN/skills/
+```
+
+Skills: `architecture`, `code-review`, `debug`, `deploy-checklist`, `documentation`, `incident-response`, `standup`, `system-design`, `tech-debt`, `testing-strategy`
+
+To find it on a new machine:
+
+```bash
+find ~/Library/Application\ Support/Claude/local-agent-mode-sessions \
+  -maxdepth 5 -name "README.md" \
+  -exec grep -l "Engineering Plugin" {} \; 2>/dev/null
+```
+
+The plugin ID is `plugin_01RAnuCvafZfGPUyv8T67WkN`. Invoke skills with the `engineering:` prefix in Claude Code, e.g. `/engineering:documentation`.
+
 ## Requirements
 
 - Claude Code CLI

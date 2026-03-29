@@ -84,6 +84,15 @@ FINALIZATION (must complete before deploy — deploy gate enforced):
 - Deploy without required skills → BLOCKED
 - State files cleaned up after successful deploy (fresh start)
 
+**Skill not found — mandatory rule:**
+If a skill listed above cannot be invoked (Skill tool returns an error or the skill does not exist), you MUST stop and notify the user immediately. Do NOT silently skip the skill and continue. Example message: "⚠️ Skill `/documentation` could not be found. Please verify the plugin is installed before continuing."
+
+**Plugin locations (for skill discovery):**
+| Plugin | Skills | Cache path |
+|--------|--------|-----------|
+| Superpowers | brainstorming, writing-plans, executing-plans, code-review, verification-before-completion, etc. | `~/.claude/plugins/cache/superpowers-marketplace/superpowers/<version>/skills/` |
+| Engineering | architecture, code-review, debug, deploy-checklist, documentation, incident-response, standup, system-design, tech-debt, testing-strategy | `~/Library/Application Support/Claude/local-agent-mode-sessions/<session-id>/<agent-id>/rpm/plugin_01RAnuCvafZfGPUyv8T67WkN/skills/` |
+
 **Rules:**
 - Do NOT stop until the final outcome is achieved
 - Always use /systematic-debugging for ANY bug, never guess-and-fix
