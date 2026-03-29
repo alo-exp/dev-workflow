@@ -4,6 +4,19 @@
 
 ---
 
+## 0. Session Startup (Automatic)
+
+At the very start of any new session, perform these steps automatically before responding to the user:
+
+1. **Switch to Opus 4.6 (1M context)** if it is not already the selected model (use `/model claude-opus-4-6[1m]`).
+2. **Read all project docs** — `docs/context.md`, this file (`CLAUDE.md`), and 100% of the `docs/` directory contents.
+3. **Compact the context** — run `/compact` to compress the loaded docs into a summary, freeing context for the actual task.
+4. **Switch back to the original model** if it was not Opus 4.6 (1M context) before step 1.
+
+This ensures every session starts with full project context regardless of model or context window size.
+
+---
+
 ## Project Overview
 
 - [Your tech stack here]
