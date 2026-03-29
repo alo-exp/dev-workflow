@@ -71,24 +71,28 @@ PLANNING (must complete before ANY src/ edit — HARD STOP enforced):
 1.  /using-superpowers              — Establish available skills (advisory)
 2.  /brainstorming                  — Explore intent, constraints, approaches    REQUIRED
 3.  /write-spec                     — Write or update spec document              REQUIRED
-5.  /architecture        (if needed)— ADR for architectural decisions
-6.  /system-design       (if needed)— Service/component design
-4.  /writing-plans                  — Detailed implementation plan               REQUIRED
+4.  /architecture        (if needed)— ADR for architectural decisions
+5.  /system-design       (if needed)— Service/component design
+6.  /writing-plans                  — Detailed implementation plan               REQUIRED
 
 EXECUTION:
 7.  /executing-plans                — Execute plan using /test-driven-development (TDD)
 
 REVIEW (must complete before deploy — deploy gate enforced):
-8.  /code-review                    — Self-review + /requesting-code-review      REQUIRED
-9.  /receiving-code-review          — Address all review items
-10. /testing-strategy               — Define test approach
-11. /systematic-debugging           — Combined with /debug for any bugs
+8.  /code-review                    — Round 1 review                             REQUIRED
+9.  /receiving-code-review          — Accept/reject Round 1 items
+10. /requesting-code-review         — Round 2 review (fresh pass after Round 1 changes)
+11. /receiving-code-review          — Accept/reject Round 2 items
+12. /writing-plans                  — Plan to address all accepted items from both rounds
+13. /executing-plans                — Implement the review-driven plan
+14. /testing-strategy               — Define test approach
+15. /systematic-debugging           — Combined with /debug for any bugs
 
 FINALIZATION (must complete before deploy — deploy gate enforced):
-12. /tech-debt                      — Identify technical debt created
-13. /documentation                  — Update all project docs
-14. /verification-before-completion — Produce evidence before claiming done      REQUIRED
-15. /deploy-checklist               — Pre-deployment verification gate
+16. /tech-debt                      — Identify technical debt created
+17. /documentation                  — Update all project docs
+18. /verification-before-completion — Produce evidence before claiming done      REQUIRED
+19. /deploy-checklist               — Pre-deployment verification gate
 ```
 
 **Enforcement workflow:**
