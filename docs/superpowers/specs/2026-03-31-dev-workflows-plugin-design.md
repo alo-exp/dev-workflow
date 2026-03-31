@@ -554,7 +554,7 @@ If either missing → output table showing status of each, install commands, and
 
 ### 12.2 During SessionStart (lightweight)
 
-Only checks if `/using-superpowers` was already injected. Does NOT check for Engineering plugin (that's a setup-time concern, not a per-session concern).
+Locates and injects `/using-superpowers` content unconditionally (write-always, idempotent). Does NOT check for Engineering plugin (that's a setup-time concern, not a per-session concern).
 
 ## 13. Existing Repo Transition
 
