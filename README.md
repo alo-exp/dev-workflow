@@ -1,5 +1,9 @@
 # Dev Workflow Enforcement
 
+> **DEPRECATED**: This repo has been superseded by [**dev-workflows**](https://github.com/alo-exp/dev-workflows) — a proper Superpowers plugin with six-layer compliance enforcement. Install the new plugin: `/plugin install alo-exp/dev-workflows`. This repo is archived and will not receive updates.
+
+---
+
 Enforce a structured, skill-based development workflow in any project using Claude Code + Superpowers skills.
 
 Ensures Claude always follows brainstorming, planning, code review, and verification steps before shipping code — automatically, via hooks.
