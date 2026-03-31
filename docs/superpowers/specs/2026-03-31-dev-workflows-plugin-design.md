@@ -33,10 +33,12 @@ alo-exp/dev-workflows/
 │   ├── plugin.json              # Plugin identity, paths, metadata
 │   └── marketplace.json         # Ālo Labs marketplace, dependency declarations
 ├── hooks/
-│   ├── hooks.json               # SessionStart + 2x PostToolUse declarations
-│   ├── session-start            # Ensures /using-superpowers fires each session
+│   ├── hooks.json               # SessionStart + 4x PostToolUse declarations
+│   ├── session-start            # SessionStart — inject /using-superpowers
 │   ├── record-skill.sh          # PostToolUse Skill — tracks invocations to state file
-│   ├── dev-cycle-check.sh       # PostToolUse Edit|Write — enforces planning gate
+│   ├── dev-cycle-check.sh       # PostToolUse Edit|Write|Bash — phase gates + HARD STOP
+│   ├── compliance-status.sh     # PostToolUse .* — universal progress score on every action
+│   ├── completion-audit.sh      # PostToolUse Bash — blocks commit/push/deploy if incomplete
 │   └── run-hook.cmd             # Cross-platform polyglot wrapper (CMD batch + bash)
 ├── scripts/
 │   └── deploy-gate-snippet.sh   # Copy-paste snippet for deploy scripts (NOT a hook)
@@ -147,11 +149,31 @@ The hooks require `jq` for JSON parsing. If `jq` is not installed:
         ]
       },
       {
-        "matcher": "Edit|Write",
+        "matcher": "Edit|Write|Bash",
         "hooks": [
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/dev-cycle-check.sh\"",
+            "async": false
+          }
+        ]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/compliance-status.sh\"",
+            "async": false
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/completion-audit.sh\"",
             "async": false
           }
         ]
@@ -160,6 +182,8 @@ The hooks require `jq` for JSON parsing. If `jq` is not installed:
   }
 }
 ```
+
+**Hook execution order**: For a Bash tool use, three hooks fire: `dev-cycle-check.sh` (phase gate), `compliance-status.sh` (progress score), and `completion-audit.sh` (commit/deploy block). All are synchronous and non-blocking on success. The compliance-status hook fires on every tool use to keep the score visible.
 
 ## 6. The `/using-dev-workflows` Skill
 
@@ -465,13 +489,15 @@ This prevents hooks in a monorepo sub-package from accidentally reading a config
 
 ### 10.3 `dev-cycle-check.sh`
 
-**Trigger**: PostToolUse, matcher `Edit|Write`
+**Trigger**: PostToolUse, matcher `Edit|Write|Bash`
 
 **Stdin schema**: The PostToolUse payload varies by tool:
 - For Edit: `{"tool_input":{"file_path":"/path/to/file", ...}}`
 - For Write: `{"tool_input":{"file_path":"/path/to/file", ...}}`
+- For Bash: `{"tool_input":{"command":"sed -i 's/foo/bar/' src/app.ts", ...}}`
 - Fallback: `{"tool_response":{"filePath":"/path/to/file"}}` (some tool versions)
-- Extraction: `.tool_input.file_path // .tool_response.filePath // ""` (try both with jq fallback)
+- Extraction for Edit|Write: `.tool_input.file_path // .tool_response.filePath // ""`
+- Extraction for Bash: `.tool_input.command` — then check if command targets files matching `src_pattern` (look for file paths in `sed`, `mv`, `cp`, `rm`, `cat >` commands)
 
 **Logic**:
 1. Read JSON from stdin, extract file path using the fallback pattern above
@@ -499,9 +525,298 @@ This prevents hooks in a monorepo sub-package from accidentally reading a config
 4. If any missing → ERROR, block deploy
 5. If all present → allow, clean up state files
 
-## 11. Known Limitations and Edge Cases
+## 11. Compliance Enforcement System
 
-### 11.1 State File Scoping
+> **Design principle**: Claude will skip steps unless actively prevented from doing so. Passive instructions in CLAUDE.md are necessary but insufficient. The enforcement system must be multi-layered, unavoidable, and continuously visible throughout the session.
+
+### 11.1 Why Current Enforcement Fails
+
+The v1 system had two enforcement hooks (Skill tracker + Edit|Write enforcer) and a detailed CLAUDE.md. In practice, Claude still skipped workflow steps — particularly in the REVIEW and FINALIZATION phases. Root causes:
+
+1. **Enforcement gap**: Hooks only fire on Edit|Write. Claude can skip non-edit steps (code review, testing strategy, documentation, verification) with zero hook feedback.
+2. **Context decay**: As the conversation grows, CLAUDE.md instructions get compressed. Claude "forgets" the workflow mid-session.
+3. **No completion gate**: Claude can claim "done" without proving it followed every step. There is no mechanism to verify compliance at the end.
+4. **Rationalization**: Claude rationalizes skipping steps ("this is simple enough," "I already covered that implicitly," "the user didn't explicitly ask for this step"). Advisory language enables this.
+
+### 11.2 Six-Layer Compliance Architecture
+
+```
+Layer 1: HARD STOP Gate           — Blocks source edits without planning    (existing, improved)
+Layer 2: Universal Progress Hook  — Shows compliance score on EVERY tool use (NEW)
+Layer 3: Phase Transition Gates   — Requires explicit phase completion proof (NEW)
+Layer 4: Completion Audit Hook    — Fires when Claude signals "done"         (NEW)
+Layer 5: Redundant Instructions   — Critical rules in CLAUDE.md + workflow + hooks (NEW)
+Layer 6: Anti-Rationalization     — Explicit language blocking common excuses (NEW)
+```
+
+### 11.3 Layer 1: HARD STOP Gate (Improved)
+
+Same as current `dev-cycle-check.sh` but expanded:
+
+**Current**: Only fires on `Edit|Write` against source files.
+**Improved**: Also fires on `Bash` tool when the command would modify source files (e.g., `sed`, `mv`, `cp`, `rm` targeting src/). Matcher becomes `Edit|Write|Bash`.
+
+The Bash hook checks if the command targets files matching `src_pattern`. If so, same Stage A/B/C/D logic applies. This closes the loophole of using Bash to bypass the Edit|Write enforcement.
+
+### 11.4 Layer 2: Universal Progress Hook
+
+**New hook**: `compliance-status.sh`
+**Trigger**: PostToolUse, matcher `.*` (fires on ALL tool uses)
+**Purpose**: Keep the workflow compliance score visible in Claude's context at all times, counteracting context decay.
+
+**Output on every tool use:**
+```
+┌─ Dev Workflows: 7/23 steps ──────────────────────┐
+│ ✅ PLANNING: 4/4 required  ✅ EXECUTION: 1/1     │
+│ ⬜ REVIEW:   0/3 required  ⬜ FINALIZATION: 0/3  │
+│ Next required: /code-review                       │
+└───────────────────────────────────────────────────┘
+```
+
+**Key behaviors:**
+- Lightweight: reads state file, counts skills, outputs a compact status line
+- Non-blocking: never prevents tool execution, only shows status
+- Always visible: because it fires on every tool use, Claude cannot lose track of where it is in the workflow
+- Shows the NEXT required step: directs Claude's attention to what it should do next
+- Fires only when a `.dev-workflows.json` exists in the project (otherwise no-op — don't clutter non-setup projects)
+
+**Performance**: The hook must be fast (<100ms). It reads one file (state), does simple counting, outputs one JSON block. No config walk-up needed — cache the config path after first resolution.
+
+### 11.5 Layer 3: Phase Transition Gates
+
+Each workflow phase (PLANNING → EXECUTION → REVIEW → FINALIZATION → DEPLOYMENT) has a gate. The gate is enforced by the `dev-cycle-check.sh` hook using the state file:
+
+**Phase gates:**
+| Transition | Gate condition | Enforcement |
+|---|---|---|
+| PLANNING → EXECUTION | All `required_planning` skills invoked | HARD STOP on Edit|Write|Bash if not met (existing) |
+| EXECUTION → REVIEW | `/executing-plans` invoked | Progress hook shows "⚠️ Execution incomplete" |
+| REVIEW → FINALIZATION | `/code-review` + `/receiving-code-review` invoked | Progress hook shows "⚠️ Review incomplete — do NOT skip to finalization" |
+| FINALIZATION → DEPLOYMENT | `/verification-before-completion` invoked | Deploy gate blocks (existing) |
+
+**Implementation**: The `dev-cycle-check.sh` hook already tracks stages A-D. Expand to detect which phase Claude is in based on which skills have been invoked, and output phase-specific enforcement:
+
+- If Claude invokes `/documentation` (finalization) but hasn't invoked `/code-review` (review) → output: `"⚠️ PHASE SKIP DETECTED: You are invoking a FINALIZATION skill but REVIEW phase is incomplete. Required: /code-review, /receiving-code-review. Complete the REVIEW phase first."`
+
+### 11.6 Layer 4: Completion Audit Hook
+
+**New hook**: `completion-audit.sh`
+**Trigger**: PostToolUse, matcher `Bash`
+**Purpose**: Detect when Claude is about to claim work is complete (committing, pushing, or running deploy commands) and enforce a final compliance check.
+
+**Detection triggers** (Bash commands matching these patterns):
+- `git commit` — about to finalize work
+- `git push` — about to share work
+- `npm run deploy` / `make deploy` / deploy-related commands
+- `gh pr create` — creating a pull request
+
+**When triggered:**
+1. Read state file, compute compliance against ALL required skills (not just planning or deploy subsets)
+2. If any required skill missing → output:
+```
+🛑 COMPLETION BLOCKED — Workflow incomplete.
+
+You are attempting to commit/push/deploy but these required steps are missing:
+  ❌ /testing-strategy
+  ❌ /documentation
+  ❌ /verification-before-completion
+
+Complete ALL required workflow steps before finalizing.
+```
+3. If all required skills present → output: `"✅ Workflow compliance verified: 23/23 steps. Proceed."`
+
+**This closes the biggest gap**: Claude can no longer claim "done" and commit without having invoked all required skills.
+
+### 11.7 Layer 5: Redundant Instructions
+
+Critical compliance rules appear in THREE places, so they survive context compression:
+
+1. **CLAUDE.md** (loaded at session start):
+   ```
+   CRITICAL: You MUST complete ALL workflow steps in docs/workflows/.
+   You MUST NOT claim work is done until /verification-before-completion
+   has been invoked and all required steps show ✅ in the compliance status.
+   ```
+
+2. **Workflow file** (`docs/workflows/full-dev-cycle.md`) — each REQUIRED step includes:
+   ```
+   11. /code-review — Round 1 self-review    REQUIRED ← DO NOT SKIP
+   ```
+
+3. **Hook output** — the universal progress hook continuously reminds Claude of remaining steps.
+
+Even if CLAUDE.md gets compressed, the hook output keeps the workflow visible. Even if Claude ignores the hook, the completion audit blocks the commit.
+
+### 11.8 Layer 6: Anti-Rationalization Language
+
+The CLAUDE.md base template and the workflow file include explicit anti-rationalization blocks:
+
+```markdown
+## NON-NEGOTIABLE RULES
+
+These rules apply to EVERY non-trivial change. There are NO exceptions.
+
+You MUST NOT:
+- Skip a REQUIRED step because "it's simple enough"
+- Combine or implicitly cover steps ("I did code review while writing")
+- Claim a step is "not applicable" without explicit user approval
+- Proceed to the next phase before completing the current phase
+- Claim work is complete without running /verification-before-completion
+
+If you believe a step is genuinely not applicable, you MUST:
+1. State which step you want to skip
+2. State why
+3. Wait for explicit user approval before proceeding
+
+"I already covered this" is NOT valid. Each skill MUST be explicitly
+invoked via the Skill tool — implicit coverage does not count because
+the enforcement hooks track Skill tool invocations, not your judgment.
+```
+
+This language is designed to block the specific rationalizations observed in v1 usage.
+
+### 11.9 Hook Architecture Summary
+
+```
+hooks/hooks.json declares:
+
+SessionStart:
+  └── session-start              → inject /using-superpowers
+
+PostToolUse (Skill):
+  └── record-skill.sh            → track skill invocations
+
+PostToolUse (Edit|Write|Bash):
+  └── dev-cycle-check.sh         → phase gates + HARD STOP
+
+PostToolUse (.*):
+  └── compliance-status.sh       → universal progress score
+
+PostToolUse (Bash):
+  └── completion-audit.sh        → block commit/push/deploy if incomplete
+```
+
+**Updated `hooks/hooks.json`:**
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/session-start\"",
+            "async": false
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/record-skill.sh\"",
+            "async": false
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/dev-cycle-check.sh\"",
+            "async": false
+          }
+        ]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/compliance-status.sh\"",
+            "async": false
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/completion-audit.sh\"",
+            "async": false
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### 11.10 Updated Plugin Structure
+
+```
+hooks/
+├── hooks.json               # All hook declarations
+├── session-start            # SessionStart — inject /using-superpowers
+├── record-skill.sh          # PostToolUse Skill — track invocations
+├── dev-cycle-check.sh       # PostToolUse Edit|Write|Bash — phase gates
+├── compliance-status.sh     # PostToolUse .* — universal progress score (NEW)
+├── completion-audit.sh      # PostToolUse Bash — block premature completion (NEW)
+└── run-hook.cmd             # Cross-platform wrapper
+```
+
+---
+
+### 10.5 `compliance-status.sh`
+
+**Trigger**: PostToolUse, matcher `.*` (all tools)
+
+**Stdin schema**: Varies by tool. This hook does NOT read stdin — it only reads the state file.
+
+**Logic**:
+1. Check if `.dev-workflows.json` exists in the project (cached path from first resolution). If not → silent no-op (project not set up with Dev Workflows).
+2. Read state file. Count skills present against each phase's required skills.
+3. Output compact progress block:
+   ```json
+   {
+     "hookSpecificOutput": {
+       "message": "Dev Workflows: 7/23 steps | PLANNING ✅ | EXECUTION ✅ | REVIEW ⬜ 0/3 | FINALIZATION ⬜ 0/3 | Next: /code-review"
+     }
+   }
+   ```
+4. Performance target: <100ms. No config walk-up — cache the config path after first resolution (use a temp file like `/tmp/.dev-workflows-config-path`).
+
+### 10.6 `completion-audit.sh`
+
+**Trigger**: PostToolUse, matcher `Bash`
+
+**Stdin schema**: `{"tool_input":{"command":"git commit -m 'feat: add X'", ...}}`
+
+**Logic**:
+1. Extract command from `.tool_input.command`
+2. Check if command matches completion patterns:
+   - `git commit` (not `git commit --amend` on existing — still counts)
+   - `git push`
+   - `gh pr create`
+   - Commands containing `deploy` (heuristic)
+3. If no match → silent no-op
+4. If match → read state file, check ALL skills in `skills.required_deploy` + additional required skills: `["testing-strategy", "documentation", "verification-before-completion"]`
+5. If any missing → output blocking message listing missing steps
+6. If all present → output `"✅ Workflow compliance verified. Proceed."`
+
+**Note**: This hook outputs a strong warning but cannot technically prevent the Bash command from executing (hooks fire after tool use). The power is in Claude seeing the warning in its context — Claude will not proceed past a `🛑 COMPLETION BLOCKED` message. Combined with the CLAUDE.md anti-rationalization rules, this is effective enforcement.
+
+---
+
+## 12. Known Limitations and Edge Cases
+
+### 12.1 State File Scoping
 
 The state file (default `/tmp/.dev-workflows-state`) is **session-scoped but not project-scoped**. Known implications:
 
@@ -509,7 +824,7 @@ The state file (default `/tmp/.dev-workflows-state`) is **session-scoped but not
 - **Concurrent sessions**: Two Claude sessions against the same project share the same state file. Skill recordings from one session will be visible to the other. This is acceptable because it is additive (never removes skills).
 - **Future improvement**: If project-scoping becomes necessary, the state file path can include a project hash: `/tmp/.dev-workflows-state-<hash-of-git-root>`. This is a config change in `.dev-workflows.json`, not a hook code change.
 
-### 11.2 State File Persistence Across Sessions
+### 12.2 State File Persistence Across Sessions
 
 On macOS, `/tmp/` survives across sessions but is cleared on reboot. On Linux, `/tmp/` behavior varies by distribution. Implications:
 
@@ -517,20 +832,20 @@ On macOS, `/tmp/` survives across sessions but is cleared on reboot. On Linux, `
 - A reboot clears state. The user will be HARD STOPPED and must re-invoke planning skills. This is **acceptable** — reboots are infrequent and re-invoking skills is fast.
 - The deploy gate cleans up state files after successful deploy, ensuring a fresh start for the next feature.
 
-### 11.3 The `active_workflow` Config Key
+### 12.3 The `active_workflow` Config Key
 
 The `project.active_workflow` key in `.dev-workflows.json` is currently **informational only**. Hooks do not parse workflow files — they read `skills.required_planning` and `skills.required_deploy` directly from the config. The `active_workflow` value tells Claude which file to load from `docs/workflows/` when starting a task.
 
 **Future**: When multiple workflows exist (bug-fix, spike, etc.), the `active_workflow` key could drive which `required_*` skill lists apply. This would be implemented by having the workflow files declare their own required skills, which the hooks read dynamically. This is a v2.0.0 concern — for now, the config is the single source of truth for enforcement.
 
-### 11.4 Hook Failure Behavior
+### 12.4 Hook Failure Behavior
 
 All hooks follow a **non-blocking failure** policy:
 - If a hook script fails (jq missing, permission denied, malformed JSON, unexpected error), it outputs valid JSON with a warning message and exits 0.
 - This ensures that a broken hook never prevents the user from editing files or invoking skills.
 - The warning message gives the user enough information to diagnose the issue.
 
-### 11.5 Update / Upgrade Path
+### 12.5 Update / Upgrade Path
 
 When the plugin is updated (new version installed), existing projects are NOT automatically updated. The user must:
 1. Run `/using-dev-workflows` again in their project
@@ -541,9 +856,9 @@ When the plugin is updated (new version installed), existing projects are NOT au
 
 ---
 
-## 12. Dependency Detection
+## 13. Dependency Detection
 
-### 12.1 During `/using-dev-workflows` (thorough)
+### 13.1 During `/using-dev-workflows` (thorough)
 
 | Plugin | Detection Method | Install Command |
 |--------|-----------------|-----------------|
@@ -552,33 +867,33 @@ When the plugin is updated (new version installed), existing projects are NOT au
 
 If either missing → output table showing status of each, install commands, and STOP.
 
-### 12.2 During SessionStart (lightweight)
+### 13.2 During SessionStart (lightweight)
 
 Locates and injects `/using-superpowers` content unconditionally (write-always, idempotent). Does NOT check for Engineering plugin (that's a setup-time concern, not a per-session concern).
 
-## 13. Existing Repo Transition
+## 14. Existing Repo Transition
 
 - **Archive** `alo-exp/dev-workflow` (singular) as v1 — mark as archived on GitHub
 - **Create** `alo-exp/dev-workflows` (plural) as the new plugin repo
 - No migration path needed — the old repo was a manual setup guide; the new repo replaces it entirely
 
-## 14. Future Extensibility
+## 15. Future Extensibility
 
-### 14.1 Adding New Workflows
+### 15.1 Adding New Workflows
 
 1. Create `templates/workflows/<name>.md` in the plugin
 2. Update `dev-workflows.config.json.default` to include the new workflow in available options
 3. Users pull update; new workflow appears in their `docs/workflows/` on next setup or manual copy
 4. Claude selects the right workflow based on task context or user instruction
 
-### 14.2 Adding New Plugins as Dependencies
+### 15.2 Adding New Plugins as Dependencies
 
 As more leading plugins emerge:
 1. Add to `marketplace.json` dependencies
 2. Update `/using-dev-workflows` Phase 1 to check for the new plugin
 3. Update workflows to reference new plugin's skills
 
-### 14.3 Per-Team Customization
+### 15.3 Per-Team Customization
 
 Teams customize via `.dev-workflows.json`:
 - Change `src_pattern` for non-standard project layouts
